@@ -9,6 +9,11 @@ const server = http.createServer(app);
 // Initialize WebSocket Layer
 const { agents } = setupWebSocketServer(server);
 
+// --- HEALTH CHECK ENDPOINT ---
+app.get('/', (req, res) => {
+  res.status(200).send('HIDPS Backend is running.');
+});
+
 // --- SUPABASE REALTIME LISTENERS ---
 
 // 1. Listen for Firewall Toggles
@@ -66,8 +71,9 @@ supabase
 
 // --- START SERVER ---
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`HIDPS Backend running on port ${PORT}`);
-  console.log(`WebSocket Endpoint: ws://localhost:${PORT}`);
+const PORT = process.env.PORT || 3000; // Render provides the PORT env var
+const HOST = '0.0.0.0'; // Listen on all network interfaces for containerized environments
+
+server.listen(PORT, HOST, () => {
+  console.log(`HIDPS Backend and WebSocket server listening on port ${PORT}`);
 });
