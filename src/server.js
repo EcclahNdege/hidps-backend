@@ -1,15 +1,17 @@
 const express = require('express');
-const http = require('http');
+const http = require('http'); // Essential for sharing the Render port
 const { setupWebSocketServer, sendCommandToAgent } = require('./websocket');
 const { supabase } = require('./supabase');
 
 const app = express();
-const server = http.createServer(app);
+const server = http.createServer(app); // Wraps express to allow WebSockets on same port
 
-// Initialize WebSocket Layer
+// --- INITIALIZE WEBSOCKET LAYER ---
+// We pass the 'server' object so WebSockets "hitchhike" on port 10000
 const { agents } = setupWebSocketServer(server);
 
 // --- HEALTH CHECK ENDPOINT ---
+// Render needs this to confirm your service is "Healthy"
 app.get('/', (req, res) => {
   res.status(200).send('HIDPS Backend is running.');
 });
@@ -17,7 +19,6 @@ app.get('/', (req, res) => {
 // --- SUPABASE REALTIME LISTENERS ---
 
 // 1. Listen for Firewall Toggles
-// When Frontend updates 'agents' -> Backend sees it -> Commands Agent
 supabase
   .channel('public:agents')
   .on(
@@ -27,8 +28,8 @@ supabase
       const { id, firewall_enabled } = payload.new;
       const oldState = payload.old.firewall_enabled;
 
-      if (oldState === undefined) return; // Initial NULL state on first insert
-      // Only send command if state actually changed
+      if (oldState === undefined) return;
+      
       console.log("Payload received for agent update:", payload);
       if (firewall_enabled !== oldState) {
         console.log(`State change detected for ${id}: Firewall -> ${firewall_enabled}`);
@@ -39,7 +40,6 @@ supabase
   .subscribe();
 
 // 2. Listen for File Monitoring Changes
-// When Frontend adds a file to 'monitored_files' -> Backend commands Agent
 supabase
   .channel('public:monitored_files')
   .on(
@@ -55,15 +55,12 @@ supabase
     'postgres_changes',
     { event: 'DELETE', schema: 'public', table: 'monitored_files' },
     (payload) => {
-      // Note: DELETE payload.old only contains the ID unless REPLICA IDENTITY is FULL
-      // If your table doesn't have Full Replica Identity, you might need to query the ID or change DB settings.
-      // Assuming we can get the data, or payload.old contains file_path:
       const { agent_id, file_path } = payload.old;
       if (file_path) {
           console.log(`Stop monitor requested for ${agent_id}: ${file_path}`);
           sendCommandToAgent(agent_id, 'unmonitor_file', { path: file_path });
       } else {
-          console.warn("Could not determine file path from DELETE event. Ensure Replica Identity is set to FULL for monitored_files table.");
+          console.warn("Check Replica Identity on Supabase for DELETE events.");
       }
     }
   )
@@ -71,8 +68,9 @@ supabase
 
 // --- START SERVER ---
 
-const PORT = process.env.PORT || 3000; // Render provides the PORT env var
-const HOST = '0.0.0.0'; // Listen on all network interfaces for containerized environments
+// Render provides the PORT dynamically; 0.0.0.0 is required for external access
+const PORT = process.env.PORT || 3000; 
+const HOST = '0.0.0.0'; 
 
 server.listen(PORT, HOST, () => {
   console.log(`HIDPS Backend and WebSocket server listening on port ${PORT}`);
