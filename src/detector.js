@@ -76,6 +76,47 @@ function formatFileAlert(message, monitoredFile) {
 }
 
 /**
+ * Check if this file event should generate an alert
+ */
+function shouldCreateFileAlert(message, monitoredFile) {
+  // ALWAYS alert on critical actions
+  if (message.includes('DELETED') || message.includes('deleted')) {
+    return true; // File deletion is always critical
+  }
+  
+  if (message.includes('MOVED') || message.includes('RENAMED')) {
+    return true; // File moving could be suspicious
+  }
+  
+  // ALWAYS alert for critical system files
+  if (monitoredFile.includes('/etc/passwd') || 
+      monitoredFile.includes('/etc/shadow') ||
+      monitoredFile.includes('/etc/sudoers') ||
+      monitoredFile.includes('/etc/ssh/sshd_config')) {
+    return true; // Critical system files - alert on any change
+  }
+  
+  // For regular files, only alert on ACTUAL modifications, not temp file noise
+  if (message.includes('MODIFIED') || message.includes('UPDATED')) {
+    return true; // Direct modification or editor save
+  }
+  
+  // Skip alerts for:
+  // - "File/Dir created" (too noisy)
+  // - "Monitored file being edited" (intermediate state)
+  // - Temp file events
+  if (message.includes('being edited') || 
+      message.includes('File/Dir created') ||
+      monitoredFile.includes('.goutputstream') ||
+      monitoredFile.includes('.swp')) {
+    return false;
+  }
+  
+  // Default: create alert for unknown file events (be cautious)
+  return true;
+}
+
+/**
  * Analyzes logs and triggers alerts for suspicious activity.
  */
 async function analyzeLog(agentId, log) {
@@ -94,12 +135,18 @@ async function analyzeLog(agentId, log) {
     }
   }
 
-  // 2. Detect Critical File Modifications (IMPROVED)
+  // 2. Detect Critical File Modifications (IMPROVED - LESS SPAM)
   if (type === 'file_monitoring') {
     const monitoredFile = extractMonitoredFileName(message);
     
     if (!monitoredFile) {
       // Skip temp files and unrecognized patterns
+      return;
+    }
+
+    // Check if this event warrants an alert
+    if (!shouldCreateFileAlert(message, monitoredFile)) {
+      // Log the event but don't create alert
       return;
     }
 
