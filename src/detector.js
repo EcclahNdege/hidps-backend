@@ -1,4 +1,6 @@
 const { createAlert } = require('./supabase');
+const { notifyCriticalAlert } = require('./email');
+const { supabase } = require('./supabase');
 
 // ========================
 // PORT SCAN DETECTION
@@ -296,13 +298,39 @@ async function analyzeLog(agentId, log) {
       
       if (scanAlert) {
         // Port scan or attack pattern detected!
-        await createAlert(
+        const alert = await createAlert(
           agentId,
           scanAlert.title,
           `${scanAlert.description}\n\n${scanAlert.details}`,
           'network',
           scanAlert.severity
         );
+        
+        // Send email notification for critical port scans
+        if (alert && scanAlert.severity >= 3) {
+          try {
+            // Get agent info and user email
+            const { data: agentData } = await supabase
+              .from('agents')
+              .select('name, owner_id')
+              .eq('id', agentId)
+              .single();
+            
+            if (agentData) {
+              const { data: userData } = await supabase
+                .from('auth.users')
+                .select('email')
+                .eq('id', agentData.owner_id)
+                .single();
+              
+              if (userData?.email) {
+                await notifyCriticalAlert(alert, agentData, userData.email);
+              }
+            }
+          } catch (emailError) {
+            console.error('Failed to send email notification:', emailError);
+          }
+        }
       }
       // Note: We don't create alerts for every single block to avoid spam
       // Only when patterns indicate scanning/attacks
