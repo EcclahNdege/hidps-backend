@@ -2,6 +2,7 @@ const WebSocket = require('ws');
 const url = require('url');
 const { supabase, setAgentOnline, updateAgentStats, createAlert } = require('./supabase');
 const { analyzeLog } = require('./detector');
+const { signCommand } = require('./commandSigner');
 
 // Map to store active agent connections: agent_id -> WebSocket
 const agents = new Map();
@@ -71,6 +72,23 @@ function setupWebSocketServer(server) {
                 rules: data.rules
             });
           }
+          else if (data.type === 'command_response' && data.status === 'rejected') {
+            // Agent rejected one of our commands (bad signature, replay, validation
+            // failure, or protected port). This is itself a security-relevant event.
+            console.warn(`Agent ${agentId} REJECTED command (id=${data.id}): ${data.reason}`);
+            await createAlert(
+              agentId,
+              'Command Rejected by Agent',
+              `Agent rejected a command: ${data.reason}`,
+              'security',
+              2
+            );
+            broadcastToFrontends({
+              type: 'command_rejected',
+              agent_id: agentId,
+              reason: data.reason,
+            });
+          }
           else {
             // 1. Run detection logic
             analyzeLog(agentId, data);
@@ -133,14 +151,23 @@ function broadcastToFrontends(data) {
 
 function sendCommandToAgent(agentId, command, payload = {}) {
   const ws = agents.get(agentId);
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ command, payload }));
-    console.log(`Sent command '${command}' to agent ${agentId}`);
-    return true;
-  } else {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
     console.warn(`Cannot send command. Agent ${agentId} is offline.`);
     return false;
   }
+
+  let signedCommand;
+  try {
+    signedCommand = signCommand(command, payload);
+  } catch (err) {
+    // Happens if AGENT_SHARED_SECRET is not configured on the backend.
+    console.error(`Failed to sign command '${command}' for agent ${agentId}: ${err.message}`);
+    return false;
+  }
+
+  ws.send(JSON.stringify(signedCommand));
+  console.log(`Sent signed command '${command}' (id=${signedCommand.id}) to agent ${agentId}`);
+  return true;
 }
 
 module.exports = { setupWebSocketServer, sendCommandToAgent };
