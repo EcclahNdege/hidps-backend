@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { supabase } = require('./supabase');
-const { encryptSecret, decryptSecret } = require('./secretCrypto');
+const { encryptSecret, decryptSecret } = require('./secretcrypto');
 
 const ENROLLMENT_TOKEN_TTL_MINUTES = 15;
 
